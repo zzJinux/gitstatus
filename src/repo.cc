@@ -145,12 +145,11 @@ IndexStats Repo::GetIndexStats(const git_oid* head, git_config* cfg) {
   }
 
   if (git_index_) {
-    int new_index;
-    VERIFY(!git_index_read_ex(git_index_, 0, &new_index)) << GitError();
-    if (new_index) {
-      head_ = {};
-      index_.reset();
-    }
+    VERIFY(!git_index_read(git_index_, 0)) << GitError();
+    // Without git_index_read_ex we can't detect if the index actually changed,
+    // so conservatively assume it did.
+    head_ = {};
+    index_.reset();
   } else {
     VERIFY(!git_repository_index(&git_index_, repo_)) << GitError();
     // Query an attribute (doesn't matter which) to initialize repo's attribute
@@ -198,7 +197,7 @@ IndexStats Repo::GetIndexStats(const git_oid* head, git_config* cfg) {
     size_t skip_worktree = 0;
     size_t assume_unchanged = 0;
     for (size_t i = 0; i != index_size; ++i) {
-      const git_index_entry* entry = git_index_get_byindex_no_sort(git_index_, i);
+      const git_index_entry* entry = git_index_get_byindex(git_index_, i);
       if (!(entry->flags_extended & GIT_INDEX_ENTRY_INTENT_TO_ADD)) ++staged;
       if (entry->flags_extended & GIT_INDEX_ENTRY_SKIP_WORKTREE) ++skip_worktree;
       if (entry->flags & GIT_INDEX_ENTRY_VALID) ++assume_unchanged;
@@ -259,8 +258,8 @@ int Repo::OnDelta(const char* type, const git_diff_delta& d, std::atomic<size_t>
   } else {
     LOG(INFO) << Msg();
   }
-  if (v + 1 < m1) return GIT_DIFF_DELTA_DO_NOT_INSERT;
-  if (Load(c2) < m2) return GIT_DIFF_DELTA_DO_NOT_INSERT | GIT_DIFF_DELTA_SKIP_TYPE;
+  if (v + 1 < m1) return 1;  // skip delta, continue
+  if (Load(c2) < m2) return 1;  // skip delta, continue
   return GIT_EUSER;
 }
 
@@ -270,7 +269,7 @@ void Repo::StartDirtyScan(const std::vector<const char*>& paths) {
   git_diff_options opt = GIT_DIFF_OPTIONS_INIT;
   opt.payload = this;
   opt.flags = GIT_DIFF_INCLUDE_TYPECHANGE_TREES | GIT_DIFF_SKIP_BINARY_CHECK |
-              GIT_DIFF_DISABLE_PATHSPEC_MATCH | GIT_DIFF_EXEMPLARS;
+              GIT_DIFF_DISABLE_PATHSPEC_MATCH;
   if (lim_.max_num_untracked) {
     opt.flags |= GIT_DIFF_INCLUDE_UNTRACKED;
     if (lim_.recurse_untracked_dirs) opt.flags |= GIT_DIFF_RECURSE_UNTRACKED_DIRS;
